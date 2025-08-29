@@ -1,4 +1,4 @@
-name: CodeQL
+name: Security – CodeQL + Secrets
 
 on:
   push:
@@ -14,44 +14,64 @@ permissions:
   security-events: write
 
 jobs:
-  analyze:
-    name: Analyze (CodeQL)
+  codeql:
+    name: CodeQL (NestJS/TS)
     runs-on: ubuntu-latest
-
     strategy:
       fail-fast: false
       matrix:
-        language: [javascript-typescript] # Next.js covers JS/TS
+        language: [javascript-typescript]
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # OPTIONAL: If you use a specific Node version for build steps
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      # OPTIONAL: install only if your build needs dependencies to parse TS project references
-      # - name: Install deps
-      #   run: |
-      #     corepack enable
-      #     pnpm i --frozen-lockfile || npm ci
+      - name: Prepare pnpm & install deps
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+
+      # If you use path aliases like "@app/*", this helps CodeQL resolve them
+      - name: Print tsconfig for debugging (optional)
+        run: |
+          [ -f tsconfig.json ] && cat tsconfig.json || true
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
           languages: ${{ matrix.language }}
-          # Choose query packs:
-          queries: security-and-quality
-          # or: queries: security-extended
+          # Stronger security coverage than security-and-quality
+          queries: security-extended
+          # Optionally, add your own query packs later with `packs:`
 
-      # For JS/TS, autobuild is usually enough (no Next.js production build).
+      # For JS/TS, autobuild is typically enough (no Next build needed)
       - name: Autobuild
         uses: github/codeql-action/autobuild@v3
 
-      - name: Perform CodeQL Analysis
+      - name: Analyze
         uses: github/codeql-action/analyze@v3
         with:
           category: "/language:${{ matrix.language }}"
+
+  secrets:
+    name: Secrets Scan (Gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        with:
+          args: detect --source . --no-git -f sarif -o gitleaks.sarif
+
+      - name: Upload SARIF (Gitleaks)
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: gitleaks.sarif
+          category: "gitleaks"
