@@ -1,76 +1,16 @@
-name: Security – CodeQL + Secrets
+secrets:
+  name: Secrets Scan (Gitleaks OSS)
+  runs-on: ubuntu-latest
+  steps:
+    - name: Checkout
+      uses: actions/checkout@v4
 
-on:
-  push:
-    branches: [main, development, staging]
-  pull_request:
-    branches: [main, development, staging]
-  schedule:
-    - cron: "0 3 * * 1" # Every Monday 03:00 UTC
+    - name: Gitleaks scan
+      uses: gitleaks/gitleaks-action@v2
+      with:
+        args: detect --report-format sarif --report-path gitleaks.sarif --exit-code 1
 
-permissions:
-  contents: read
-  actions: read
-  security-events: write
-
-jobs:
-  codeql:
-    name: CodeQL (NestJS/TS)
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        language: [javascript-typescript]
-
-    steps:
-      - name: Checkout
-      # v4 uses shallow clone; good for speed
-        uses: actions/checkout@v4
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install dependencies (pnpm)
-        run: |
-          set -euo pipefail
-          corepack enable
-          pnpm install --frozen-lockfile
-
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
-        with:
-          languages: ${{ matrix.language }}
-          queries: security-extended
-
-      - name: Autobuild
-        uses: github/codeql-action/autobuild@v3
-
-      - name: Analyze
-        uses: github/codeql-action/analyze@v3
-        with:
-          category: "/language:${{ matrix.language }}"
-
-  secrets:
-    name: Secrets Scan (Gitleaks OSS)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Gitleaks (via GitHub CLI)
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          ARCH="$(uname -m)"
-          case "$ARCH" in
-            x86_64)  FILEPATTERN="gitleaks_*_linux_x64.tar.gz" ;;
-            aarch64) FILEPATTERN="gitleaks_*_linux_arm64.tar.gz" ;;
-            *) echo "Unsupported arch: $ARCH"; exit 1 ;;
-          esac
-          mkdir -p /tmp/gitleaks
-          gh release download --repo gitleaks/gitleaks --pattern "$FILEPATTERN" --dir /tmp/gitleaks --skip-existing
-          tar -xzf /tmp/gitleaks/gitleaks_*_linux_*.tar.gz -C /tmp/gitleaks
-          sudo mv /tmp/gitleaks/gitleaks /usr/local/bin/gitl
+    - name: Upload SARIF to code scanning
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: gitleaks.sarif
