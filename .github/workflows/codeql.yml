@@ -24,6 +24,7 @@ jobs:
 
     steps:
       - name: Checkout
+      # v4 uses shallow clone; good for speed
         uses: actions/checkout@v4
 
       - name: Set up Node
@@ -33,6 +34,7 @@ jobs:
 
       - name: Install dependencies (pnpm)
         run: |
+          set -euo pipefail
           corepack enable
           pnpm install --frozen-lockfile
 
@@ -57,16 +59,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install gitleaks
+      - name: Install Gitleaks (via GitHub CLI)
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          curl -sSfL https://github.com/gitleaks/gitleaks/releases/latest/download/gitleaks_$(uname -s)_$(uname -m).tar.gz \
-          | tar -xvz -C /usr/local/bin gitleaks
-
-      - name: Run gitleaks
-        run: gitleaks detect --source . --no-git -f sarif -o gitleaks.sarif
-
-      - name: Upload SARIF
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: gitleaks.sarif
-          category: "gitleaks"
+          set -euo pipefail
+          ARCH="$(uname -m)"
+          case "$ARCH" in
+            x86_64)  FILEPATTERN="gitleaks_*_linux_x64.tar.gz" ;;
+            aarch64) FILEPATTERN="gitleaks_*_linux_arm64.tar.gz" ;;
+            *) echo "Unsupported arch: $ARCH"; exit 1 ;;
+          esac
+          mkdir -p /tmp/gitleaks
+          gh release download --repo gitleaks/gitleaks --pattern "$FILEPATTERN" --dir /tmp/gitleaks --skip-existing
+          tar -xzf /tmp/gitleaks/gitleaks_*_linux_*.tar.gz -C /tmp/gitleaks
+          sudo mv /tmp/gitleaks/gitleaks /usr/local/bin/gitl
