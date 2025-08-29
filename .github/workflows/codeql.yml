@@ -8,7 +8,7 @@ on:
   schedule:
     - cron: "0 3 * * 1" # Every Monday 03:00 UTC
 
-# Minimized, safe defaults for the whole workflow
+# Minimal, safe defaults for the whole workflow
 permissions:
   contents: read
   security-events: write
@@ -50,7 +50,6 @@ jobs:
           languages: ${{ matrix.language }}
           queries: security-extended
 
-      # For JS/TS, autobuild is generally fine (no Next.js prod build required)
       - name: Autobuild
         uses: github/codeql-action/autobuild@v3
 
@@ -68,7 +67,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Install OSS Gitleaks via GitHub CLI to avoid asset-name mismatches
+      # Install OSS Gitleaks: pick the exact Linux asset via GitHub API (handles x64/arm64)
       - name: Install Gitleaks
         env:
           GH_TOKEN: ${{ github.token }}
@@ -76,10 +75,42 @@ jobs:
           set -euo pipefail
           ARCH="$(uname -m)"
           case "$ARCH" in
-            x86_64)  FILEPATTERN="gitleaks_*_linux_x64.tar.gz" ;;
-            aarch64) FILEPATTERN="gitleaks_*_linux_arm64.tar.gz" ;;
+            x86_64)  ARCH_SUFFIX="x64" ;;
+            aarch64) ARCH_SUFFIX="arm64" ;;
             *) echo "Unsupported architecture: $ARCH" >&2; exit 1 ;;
           esac
+
           mkdir -p /tmp/gitleaks
-          gh release download --repo gitleaks/gitleaks --pattern "$FILEPATTERN" --dir /tmp/gitleaks --skip-existing
-          tar -xzf /tmp/
+          # Find the correct asset download URL for Linux
+          ASSET_URL="$(gh api repos/gitleaks/gitleaks/releases/latest --jq ".assets[] | select(.name | test(\"linux_${ARCH_SUFFIX}.*\\.tar\\.gz$\")) | .browser_download_url")"
+          if [ -z "$ASSET_URL" ]; then
+            echo "Could not find a gitleaks Linux ${ARCH_SUFFIX} asset in the latest release." >&2
+            gh api repos/gitleaks/gitleaks/releases/latest --jq '.assets[].name'
+            exit 1
+          fi
+
+          curl -sSL "$ASSET_URL" -o /tmp/gitleaks/gitleaks.tar.gz
+          tar -xzf /tmp/gitleaks/gitleaks.tar.gz -C /tmp/gitleaks
+          # The tar contains a single 'gitleaks' binary
+          sudo mv /tmp/gitleaks/gitleaks /usr/local/bin/gitleaks
+          sudo chmod +x /usr/local/bin/gitleaks
+          gitleaks version
+
+      # Run scan; returns exit code 1 if leaks are found (fails the job by design)
+      - name: Run Gitleaks
+        run: |
+          set -euo pipefail
+          gitleaks detect \
+            --source . \
+            --no-git \
+            --report-format sarif \
+            --report-path gitleaks.sarif \
+            --exit-code 1
+
+      # Always upload SARIF so alerts appear even if leaks were found
+      - name: Upload SARIF (Gitleaks)
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: gitleaks.sarif
+          category: "gitleaks"
