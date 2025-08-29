@@ -24,6 +24,7 @@ jobs:
 
     steps:
       - name: Checkout
+      # v4 uses shallow clone; good for speed
         uses: actions/checkout@v4
 
       - name: Set up Node
@@ -58,16 +59,30 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Option A: simplest – use official action
-      - name: Gitleaks scan
-        id: gitleaks
-        uses: gitleaks/gitleaks-action@v2
-        with:
-          # If a local .gitleaks.toml exists, it will be picked up automatically in the next step.
-          args: detect --report-format sarif --report-path gitleaks.sarif --exit-code 1
+      - name: Install Gitleaks (via GitHub CLI)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ARCH="$(uname -m)"
+          case "$ARCH" in
+            x86_64)  FILEPATTERN="gitleaks_*_linux_x64.tar.gz" ;;
+            aarch64) FILEPATTERN="gitleaks_*_linux_arm64.tar.gz" ;;
+            *) echo "Unsupported arch: $ARCH"; exit 1 ;;
+          esac
+          mkdir -p /tmp/gitleaks
+          gh release download --repo gitleaks/gitleaks --pattern "$FILEPATTERN" --dir /tmp/gitleaks --skip-existing
+          tar -xzf /tmp/gitleaks/gitleaks_*_linux_*.tar.gz -C /tmp/gitleaks
+          sudo mv /tmp/gitleaks/gitleaks /usr/local/bin/gitleaks
+          gitleaks version
 
-      - name: Upload SARIF to Code Scanning
-        if: always() # upload even if the scan failed the job
+      - name: Run Gitleaks
+        run: |
+          set -euo pipefail
+          gitleaks detect --source . --no-git -f sarif -o gitleaks.sarif
+
+      - name: Upload SARIF (Gitleaks)
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: gitleaks.sarif
+          category: "gitleaks"
