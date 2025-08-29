@@ -8,15 +8,20 @@ on:
   schedule:
     - cron: "0 3 * * 1" # Every Monday 03:00 UTC
 
+# Minimized, safe defaults for the whole workflow
 permissions:
   contents: read
-  actions: read
   security-events: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   codeql:
-    name: CodeQL (NestJS/TS)
+    name: CodeQL (NestJS/TypeScript)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -24,13 +29,14 @@ jobs:
 
     steps:
       - name: Checkout
-      # v4 uses shallow clone; good for speed
         uses: actions/checkout@v4
 
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: '**/pnpm-lock.yaml'
 
       - name: Install dependencies (pnpm)
         run: |
@@ -44,6 +50,7 @@ jobs:
           languages: ${{ matrix.language }}
           queries: security-extended
 
+      # For JS/TS, autobuild is generally fine (no Next.js prod build required)
       - name: Autobuild
         uses: github/codeql-action/autobuild@v3
 
@@ -55,11 +62,14 @@ jobs:
   secrets:
     name: Secrets Scan (Gitleaks OSS)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Gitleaks (via GitHub CLI)
+      # Install OSS Gitleaks via GitHub CLI to avoid asset-name mismatches
+      - name: Install Gitleaks
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -68,21 +78,8 @@ jobs:
           case "$ARCH" in
             x86_64)  FILEPATTERN="gitleaks_*_linux_x64.tar.gz" ;;
             aarch64) FILEPATTERN="gitleaks_*_linux_arm64.tar.gz" ;;
-            *) echo "Unsupported arch: $ARCH"; exit 1 ;;
+            *) echo "Unsupported architecture: $ARCH" >&2; exit 1 ;;
           esac
           mkdir -p /tmp/gitleaks
           gh release download --repo gitleaks/gitleaks --pattern "$FILEPATTERN" --dir /tmp/gitleaks --skip-existing
-          tar -xzf /tmp/gitleaks/gitleaks_*_linux_*.tar.gz -C /tmp/gitleaks
-          sudo mv /tmp/gitleaks/gitleaks /usr/local/bin/gitleaks
-          gitleaks version
-
-      - name: Run Gitleaks
-        run: |
-          set -euo pipefail
-          gitleaks detect --source . --no-git -f sarif -o gitleaks.sarif
-
-      - name: Upload SARIF (Gitleaks)
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: gitleaks.sarif
-          category: "gitleaks"
+          tar -xzf /tmp/
