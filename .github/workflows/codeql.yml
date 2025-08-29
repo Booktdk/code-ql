@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   codeql:
-    name: CodeQL (NestJS/TypeScript)
+    name: CodeQL
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -34,16 +34,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'pnpm'
-          
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v2
-        with:
-          version: 8.x
-          run_install: false
+          cache: 'npm'
 
-      - name: Install dependencies (pnpm)
-        run: pnpm install --frozen-lockfile
+      - name: Install dependencies (npm)
+        run: npm ci
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
@@ -68,7 +62,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Install the latest OSS Gitleaks binary for Linux (x64/arm64) via GitHub API
       - name: Install Gitleaks
         env:
           GH_TOKEN: ${{ github.token }}
@@ -93,7 +86,6 @@ jobs:
           sudo chmod +x /usr/local/bin/gitleaks
           gitleaks version
 
-      # Run scan and ALWAYS produce a SARIF file (even if leaks are found or none found)
       - name: Run Gitleaks
         id: gitleaks
         continue-on-error: true
@@ -107,7 +99,6 @@ jobs:
             --report-format sarif \
             --report-path reports/gitleaks.sarif \
             --redact || EXIT_CODE=$?
-          # Ensure SARIF exists even if gitleaks didn't write one
           if [ ! -s reports/gitleaks.sarif ]; then
             cat > reports/gitleaks.sarif <<'EOF'
             {
@@ -131,7 +122,6 @@ jobs:
           sarif_file: reports/gitleaks.sarif
           category: "gitleaks"
 
-      # Optional: fail the job if leaks were found (kept after upload so alerts are still visible)
       - name: Fail if leaks found
         if: steps.gitleaks.outputs.exit_code != '0'
         run: |
